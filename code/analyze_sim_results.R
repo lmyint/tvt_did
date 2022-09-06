@@ -350,7 +350,8 @@ for (what in c("bias", "se")) {
         ) +
         facet_grid(. ~ data_setup) +
         labs(x = "Confounding strength multiplier", y = ylab) +
-        theme(text = element_text(size = 14))
+        theme(text = element_text(size = 14)) +
+        guides(color = "none")
     if (what=="bias") {
         p <- p + geom_hline(yintercept = 0, color = "red")
     }
@@ -358,6 +359,6 @@ for (what in c("bias", "se")) {
     index <- index + 1
 }
 
-pdf("../results/results_conf_strength_mult.pdf", width = 14, height = 6)
-grid.arrange(plot_list[[1]], plot_list[[2]], ncol = 2)
+pdf("../results/results_conf_strength_mult.pdf", width = 7.5, height = 8)
+grid.arrange(plot_list[[1]], plot_list[[2]], nrow = 2)
 dev.off()
