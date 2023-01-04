@@ -9,34 +9,19 @@ source("functions_estim.R")
 num_reps <- 100
 
 ## Number of units
+pop_size <- 1e6
 samp_sizes <- c(300, 3000)
 
 ## Number of time periods with available data
 num_time_periods <- 4
 
-## Strength of treatment-confounder feedback (coefficient on D_t-1 in the structural equation for X_t)
-# treat_conf_strengths <- c(0, -0.05, -0.5, 0.05, 0.5)
-
 ## Multipliers of the X -> D and U/X -> Y coefficients
 multipliers <- 1:3
 
-## Code running times for 1 rep of 1 multiplier
-## 45.785 for samp_sizes <- c(300, 3000) ------------> 3.8 hours
-## 108.816 for samp_sizes <- c(300, 3000, 6000) -----> 9.1 hours
-## 344.178 for samp_sizes <- c(300, 3000, 30000) ----> 28.7 hours
-
 extract_info_att_gt <- function(obj) {
-    ## Group-time atts
     res_gt <- tibble(group = obj$group, time = obj$t, estimate = obj$att, se = obj$se)
 
-    ## Aggregating group-time ATTs by event time
-    agg_dyna <- aggte(obj, type = "dynamic")
-    res_agg_dyna <- tibble(group = "dynamic", time = agg_dyna$egt, estimate = agg_dyna$att.egt, se = agg_dyna$se.egt)
-
-    bind_rows(
-        res_gt %>% mutate(group = as.character(group)),
-        res_agg_dyna
-    )
+    res_gt %>% mutate(group = as.character(group))
 }
 
 extract_info_msm <- function(obj, gtatt = FALSE) {
@@ -129,56 +114,34 @@ estimate_effects <- function(sim_data) {
     df_gtatt$estimate <- sapply(estimates_gtatt, "[[", "estimate")
     df_gtatt$se <- sapply(estimates_gtatt, "[[", "se")
     
+    ## Add weights column `tvt_wts` to sim_data
+    sim_data$tvt_wts <- ipw_tvt_wts_t4$ate_stab
+
     ## Effect estimation using Callaway and Sant'Anna 2021 (did package)
     ## Reformat data for compatibility with the att_gt() function
     sim_data_long_did <- sim_data %>%
-        pivot_longer(-c(id, group), names_to = c(".value", "time"), names_pattern = "(.)(.)") %>%
+        pivot_longer(-c(id, group, tvt_wts), names_to = c(".value", "time"), names_pattern = "(.)(.)") %>%
         mutate(time = as.numeric(time))
 
     x_formulas <- c(~1, ~X)
-    gt_att_res <- lapply(x_formulas, function(x_form) {
-        gt_atts_never_dr <- att_gt(yname = "Y", tname = "time", idname = "id", gname = "group", xformla = x_form, panel = TRUE, control_group = "nevertreated", est_method = "dr", data = sim_data_long_did) %>% extract_info_att_gt()
-        gt_atts_never_ipw <- att_gt(yname = "Y", tname = "time", idname = "id", gname = "group", xformla = x_form, panel = TRUE, control_group = "nevertreated", est_method = "ipw", data = sim_data_long_did) %>% extract_info_att_gt()
-        gt_atts_notyet_dr <- att_gt(yname = "Y", tname = "time", idname = "id", gname = "group", xformla = x_form, panel = TRUE, control_group = "notyettreated", est_method = "dr", data = sim_data_long_did) %>% extract_info_att_gt()
-        gt_atts_notyet_ipw <- att_gt(yname = "Y", tname = "time", idname = "id", gname = "group", xformla = x_form, panel = TRUE, control_group = "notyettreated", est_method = "ipw", data = sim_data_long_did) %>% extract_info_att_gt()
-        list(never_dr = gt_atts_never_dr, never_ipw = gt_atts_never_ipw, notyet_dr = gt_atts_notyet_dr, notyet_ipw = gt_atts_notyet_ipw)
+    weight_names <- list(NULL, "tvt_wts")
+    gt_att_res <- lapply(weight_names, function(weight_name) {
+        res <- lapply(x_formulas, function(x_form) {
+            gt_atts_never_dr <- att_gt(yname = "Y", tname = "time", idname = "id", gname = "group", xformla = x_form, weightsname = weight_name, panel = TRUE, control_group = "nevertreated", est_method = "dr", data = sim_data_long_did) %>% extract_info_att_gt()
+            gt_atts_never_ipw <- att_gt(yname = "Y", tname = "time", idname = "id", gname = "group", xformla = x_form, weightsname = weight_name, panel = TRUE, control_group = "nevertreated", est_method = "ipw", data = sim_data_long_did) %>% extract_info_att_gt()
+            gt_atts_notyet_dr <- att_gt(yname = "Y", tname = "time", idname = "id", gname = "group", xformla = x_form, weightsname = weight_name, panel = TRUE, control_group = "notyettreated", est_method = "dr", data = sim_data_long_did) %>% extract_info_att_gt()
+            gt_atts_notyet_ipw <- att_gt(yname = "Y", tname = "time", idname = "id", gname = "group", xformla = x_form, weightsname = weight_name, panel = TRUE, control_group = "notyettreated", est_method = "ipw", data = sim_data_long_did) %>% extract_info_att_gt()
+            list(never_dr = gt_atts_never_dr, never_ipw = gt_atts_never_ipw, notyet_dr = gt_atts_notyet_dr, notyet_ipw = gt_atts_notyet_ipw)
+        })
+        names(res) <- c("unadj", "adj")
+        res
     })
-    names(gt_att_res) <- c("unadj", "adj")
+    names(gt_att_res) <- c("unweighted", "weighted")
 
     list(
         ipw_tvt_results = list(time1 = ipw_tvt_fit1, time2 = ipw_tvt_fit2, time3 = ipw_tvt_fit3, time4 = ipw_tvt_fit4, time1_alt = ipw_tvt_fit1_sepweights, time2_alt = ipw_tvt_fit2_sepweights, time3_alt = ipw_tvt_fit3_sepweights, gt_att = df_gtatt),
         gt_att_results = gt_att_res
     )
-}
-
-define_struct_equations <- function(multiplier) {
-    m <- multiplier
-    treat_conf_strength <- 0.5
-    struct_eqns1 <- list(
-        "U" = tibble(var = "U", when_rel = -1, coeff = 0.5),
-        "X" = tibble(var = c("U", "D"), when_rel = c(0, -1), coeff = c(0.5, treat_conf_strength)),
-        "D" = tibble(var = c("1", "X", "X"), when_rel = c(0, 0, -1), coeff = c(-1, -0.5, -0.5)*c(1, m, m)),
-        "Y" = tibble(var = c("U", "D", "Y"), when_rel = c(0, 0, -1), coeff = c(0.5, 0.5, 0.5)*c(m, 1, 1))
-    )
-
-    # struct_eqns2 <- struct_eqns1
-    # struct_eqns2$U <- tibble(var = c("U", "D"), when_rel = c(-1, -1), coeff = c(0.5, treat_conf_strength))
-    # struct_eqns2$X <- tibble(var = "U", when_rel = 0, coeff = 0.5)
-
-    # struct_eqns3 <- struct_eqns1
-    # struct_eqns3$U <- NULL
-    # struct_eqns3$X <- tibble(var = "D", when_rel = -1, coeff = treat_conf_strength)
-    # struct_eqns3$Y$var <- c("X", "D", "Y")
-
-    struct_eqns4 <- struct_eqns1
-    struct_eqns4$W <- struct_eqns4$U
-    struct_eqns4$W$var <- "W"
-    struct_eqns4$D <- bind_rows(struct_eqns4$D, tibble(var = "W", when_rel = 0, coeff = -0.5*m))
-    struct_eqns4$Y <- bind_rows(struct_eqns4$Y, tibble(var = "W", when_rel = 0, coeff = 0.5*m))
-    struct_eqns4 <- struct_eqns4[c("U", "W", "X", "D", "Y")]
-
-    # list(setup1 = struct_eqns1, setup2 = struct_eqns2, setup3 = struct_eqns3, setup4 = struct_eqns4)
-    list(setup1 = struct_eqns1, setup4 = struct_eqns4)
 }
 
 get_n_all_strats <- function(dat, num_time_periods) {
@@ -187,35 +150,58 @@ get_n_all_strats <- function(dat, num_time_periods) {
         count(across({{ which_vars }}))
 }
 
-run_simulations <- function(struct_eqns_list, n, num_time_periods) {
-    ## Simulate data and estimate causal effects
-    sim_data_list <- lapply(struct_eqns_list, simulate_data_from_equations, n = n, num_tp = num_time_periods, absorbing = TRUE, under_intervention = FALSE, treat_strategy = NULL)
+run_simulations <- function(sim_data_list, n, num_time_periods) {
+    sim_data_list <- lapply(sim_data_list, slice_sample, n = n)
     estimates <- lapply(sim_data_list, estimate_effects)
     samp_sizes_by_strat <- lapply(sim_data_list, get_n_all_strats, num_time_periods = num_time_periods)
     list(estimates = estimates, samp_sizes = samp_sizes_by_strat)
 }
 
 set.seed(141)
+system.time({
 sim_results <- lapply(multipliers, function(multiplier) {
-    ## Define structural equations for different data settings
-    struct_eqns_list <- define_struct_equations(multiplier)
+    sim_data1 <- simulate_data_setup1(N = pop_size, num_tp = num_time_periods, multiplier = multiplier, absorbing = TRUE)
+    sim_data2 <- simulate_data_setup2(N = pop_size, num_tp = num_time_periods, multiplier = multiplier, absorbing = TRUE)
+    sim_data3 <- simulate_data_setup3(N = pop_size, num_tp = num_time_periods, multiplier = multiplier, absorbing = TRUE)
+    sim_data4 <- simulate_data_setup4(N = pop_size, num_tp = num_time_periods, multiplier = multiplier, absorbing = TRUE)
+    sim_data_list <- list(setup1 = sim_data1$pop_natural, setup2 = sim_data2$pop_natural, setup3 = sim_data3$pop_natural, setup4 = sim_data4$pop_natural)
 
     ## Repeat simulations
     estimates_list <- replicate(n = num_reps, {
         list_over_sampsizes <- lapply(samp_sizes, function(this_n) {
-            run_simulations(struct_eqns_list = struct_eqns_list, n = this_n, num_time_periods = num_time_periods)
+            run_simulations(sim_data_list = sim_data_list, n = this_n, num_time_periods = num_time_periods)
         })
         names(list_over_sampsizes) <- samp_sizes
         list_over_sampsizes
     }, simplify = FALSE)
 
-    ## "Simulate" expected values of variables under interventions
-    truth_list <- lapply(struct_eqns_list, get_truth_all_strats, num_tp = num_time_periods, absorbing = TRUE)
+    ## Store potential outcomes under interventions
+    truth_list <- list(setup1 = sim_data1$pop_intervention, setup2 = sim_data2$pop_intervention, setup3 = sim_data3$pop_intervention, setup4 = sim_data4$pop_intervention)
+
+    truth_list <- lapply(truth_list, function(list_over_strats) {
+        lapply(seq_along(list_over_strats), function(i) {
+            dat <- select(list_over_strats[[i]], starts_with("Y"))
+            this_strat <- names(list_over_strats)[i]
+            colnames(dat) <- paste0(colnames(dat), "_", this_strat)
+            dat
+        }) %>% bind_cols()
+    })
+    truth_list <- lapply(names(sim_data_list), function(setup) {
+        natural_treat <- sim_data_list[[setup]] %>% select(starts_with("D"))
+        dat <- bind_cols(natural_treat, truth_list[[setup]])
+        mean_by_strat <- dat %>%
+            group_by(D1, D2, D3, D4) %>%
+            summarize(across(starts_with("Y"), mean))
+        mean_overall <- dat %>%
+            summarize(across(starts_with("Y"), mean))
+        list(mean_overall = mean_overall, mean_by_strat = mean_by_strat)
+    })
 
     list(estimates = estimates_list, truth = truth_list)
 })
+})
 
-write_rds(sim_results, file = "../data/sim_results.rds", compress = "gz")
+write_rds(sim_results, file = "../results/sim_results.rds", compress = "gz")
 
 ## ============================================================================
 ## Session Info
