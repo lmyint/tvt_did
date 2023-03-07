@@ -276,7 +276,7 @@ all_bias_results_subs <- all_bias_results %>%
         ),
         data_setup = factor(data_setup, levels = c("Time-invariant, measured:\nSE Y PT Y", "Time-invariant, unmeasured:\nSE X PT Y", "Time-varying, measured:\nSE Y PT X", "Time-varying, unmeasured:\nSE X PT X")),
         method = factor(method, levels = methods_ordered),
-        tvt_weighted = str_detect(method, "^weighted_")
+        tvt_weighted = factor(ifelse(str_detect(method, "^weighted_"), "TVT ATE weights", "Unweighted"), levels = c("Unweighted", "TVT ATE weights"))
     ) %>%
     left_join(df_estimands) %>%
     mutate(estimand_neat = factor(estimand_neat, levels = df_estimands$estimand_neat))
@@ -309,7 +309,7 @@ for (what in c("bias", "se")) {
                 )
         }
         p <- ggplot(plot_data, aes(x = estimand_neat, y = .data[[what]], color = method, linetype = tvt_weighted)) +
-            geom_tufteboxplot() +
+            geom_tufteboxplot(size = 1.25) +
             theme_classic() +
             scale_color_manual(
                 values = method_colors, 
@@ -330,29 +330,37 @@ for (what in c("bias", "se")) {
                     "CS2021: TVT weighted, adjusted\nControls: not yet treated"
                 )
             ) +
-            facet_grid(. ~ data_setup) +
-            labs(x = xlab, y = ylab, title = title) +
-            theme(text = element_text(size = 16))
+            facet_wrap(. ~ data_setup, nrow = 2, ncol = 2) +
+            labs(x = xlab, y = ylab) +
+            theme(text = element_text(size = 30))
         if (est_type=="TVT") {
             p <- p +
-                geom_vline(xintercept = c(4,8,11,13)+0.5, color = "black", lty = "dashed")
+                geom_vline(xintercept = c(4,8,11,13)+0.5, color = "gray", lty = "dashed", linewidth = 1.5)
         } else if (est_type=="TVT_GTATT") {
-            p <- p + geom_vline(xintercept = c(4,10,14)+0.5, color = "black", lty = "dashed")
+            p <- p + geom_vline(xintercept = c(4,10,14)+0.5, color = "gray", lty = "dashed", linewidth = 1.5) + theme(legend.position = "bottom") + guides(linetype = guide_legend(title = "Weighting of CS2021 estimators"), color = guide_legend(title = ""))
         }
         if (what=="bias") {
-            p <- p + geom_hline(yintercept = 0, color = "red")
+            p <- p + geom_hline(yintercept = 0, color = "red", linewidth = 1.25)
         }
         plot_list[[index]] <- p
         index <- index + 1
     }
 }
 
-pdf("../results/results_main_msm.pdf", width = 24, height = 14)
-grid.arrange(plot_list[[1]], plot_list[[3]], nrow = 2, ncol = 1)
+pdf("../results/results_main_msm_bias.pdf", width = 24, height = 14)
+plot_list[[1]]
 dev.off()
 
-pdf("../results/results_main_gtatt.pdf", width = 24, height = 14)
-grid.arrange(plot_list[[2]], plot_list[[4]], nrow = 2, ncol = 1)
+pdf("../results/results_main_msm_se.pdf", width = 24, height = 14)
+plot_list[[3]]
+dev.off()
+
+pdf("../results/results_main_gtatt_bias.pdf", width = 32, height = 16)
+plot_list[[2]]
+dev.off()
+
+pdf("../results/results_main_gtatt_se.pdf", width = 32, height = 16)
+plot_list[[4]]
 dev.off()
 
 plot_list <- list()
@@ -367,7 +375,7 @@ for (what in c("bias", "se")) {
         ylab <- "SE"
     }
     p <- ggplot(plot_data, aes(x = factor(multiplier), y = .data[[what]], color = method, linetype = tvt_weighted)) +
-        geom_tufteboxplot() +
+        geom_tufteboxplot(size = 1.25) +
         theme_classic() +
         scale_color_manual(
             values = method_colors, 
@@ -388,11 +396,11 @@ for (what in c("bias", "se")) {
                 "CS2021: TVT weighted, adjusted\nControls: not yet treated"
             )
         ) +
-        facet_grid(. ~ data_setup) +
+        facet_wrap(. ~ data_setup, nrow = 2, ncol = 2) +
         labs(x = "Confounding strength multiplier", y = ylab) +
-        theme(text = element_text(size = 16))
+        theme(text = element_text(size = 30))
     if (what=="bias") {
-        p <- p + geom_hline(yintercept = 0, color = "red")
+        p <- p + geom_hline(yintercept = 0, color = "red", linewidth = 1.25)
     } else {
         p <- p + ylim(0, 1.5)
     }
@@ -400,6 +408,10 @@ for (what in c("bias", "se")) {
     index <- index + 1
 }
 
-pdf("../results/results_conf_strength_mult.pdf", width = 24, height = 14)
-grid.arrange(plot_list[[1]], plot_list[[2]], nrow = 2)
+pdf("../results/results_conf_strength_mult_bias.pdf", width = 24, height = 14)
+plot_list[[1]]
+dev.off()
+
+pdf("../results/results_conf_strength_mult_se.pdf", width = 24, height = 14)
+plot_list[[2]]
 dev.off()
